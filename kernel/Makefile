@@ -35,8 +35,12 @@ KERNEL_IMG := $(BUILD)/kernel8.img
 
 BOOT_S := arch/arm64/boot/boot.S
 
+ASM_SRC := \
+	arch/arm64/kernel/exceptions.S
+
 C_SRC := \
 	init/main.c \
+	arch/arm64/kernel/exception_handler.c \
 	drivers/tty/serial/serial_core.c \
 	drivers/tty/serial/amba-pl011.c 
 
@@ -45,8 +49,9 @@ C_SRC := \
 # ============================================================
 
 BOOT_O := $(BUILD)/arch/arm64/boot/boot.o
+ASM_OBJ := $(patsubst %.S,$(BUILD)/%.o,$(ASM_SRC))
 C_OBJ  := $(patsubst %.c,$(BUILD)/%.o,$(C_SRC))
-ALL_OBJ := $(BOOT_O) $(C_OBJ)
+ALL_OBJ := $(BOOT_O) $(ASM_OBJ) $(C_OBJ)
 
 # ============================================================
 # Targets
@@ -81,6 +86,11 @@ $(KERNEL_ELF): $(ALL_OBJ)
 # ============================================================
 
 $(BUILD)/arch/arm64/boot/boot.o: $(BOOT_S)
+	@echo "  AS      $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/%.o: %.S
 	@echo "  AS      $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@

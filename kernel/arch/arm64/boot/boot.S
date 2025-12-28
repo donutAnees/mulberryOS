@@ -9,7 +9,42 @@
 .globl _start
 
 _start:
+    // --------------------------------------------------
+    // Step 0: Drop to EL1 (EL2 → EL1 if needed)
+    // EL1 is the target Exception Level for OS
+    // --------------------------------------------------
 
+    // Check current exception level
+    mrs     x5, CurrentEL
+    lsr     x5, x5, #2        // Extract EL number (bits [3:2])
+    cmp     x5, #2
+    b.ne    el1_entry         // If already EL1, skip EL2 setup
+
+    // ---- Running in EL2, need to drop to EL1 ----
+
+    // Configure HCR_EL2 - Hypervisor Configuration Register
+    // Set bit 31 (RW) = 1 for AArch64 execution state at EL1
+    mov     x5, #(1 << 31)
+    msr     hcr_el2, x5
+
+    // Disable MMU/caches in EL2
+    mov     x5, #0
+    msr     sctlr_el2, x5
+    isb
+
+    // Set return address for EL1
+    adr     x5, el1_entry
+    msr     elr_el2, x5
+
+    // Configure SPSR_EL2 for EL1h mode with interrupts masked
+    // Bits [3:0] = 0b0101 (EL1h - use SP_EL1)
+    // Bits [9:6] = 0b1111 (mask DAIF - Debug, SError, IRQ, FIQ)
+    mov     x5, #0x3C5        // 0b0011_1100_0101
+    msr     spsr_el2, x5
+
+    eret                      // Exception return to EL1
+
+el1_entry:
     // --------------------------------------------------
     // Step 1: Establish a temporary stack
     // Stack will be placed just after the kernel + 16KB space

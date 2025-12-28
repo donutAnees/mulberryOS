@@ -83,6 +83,13 @@ SECTIONS
     }
 
     /*
+     * Exception vector table
+     */
+    .text.vectors : {
+        *(.text.vectors)
+    }
+
+    /*
      * Main kernel code
      * All compiled C functions go here
      */
