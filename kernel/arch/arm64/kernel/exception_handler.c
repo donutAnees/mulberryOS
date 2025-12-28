@@ -1,5 +1,8 @@
 #include <types.h>
 #include <serial_core.h>
+#include <exception.h>
+#include <asm/sysreg.h>
+#include <asm/esr.h>
 
 static const char *exception_names[] = {
     "Current EL with SP_EL0 - Sync",
@@ -20,36 +23,73 @@ static const char *exception_names[] = {
     "Lower EL (AArch32) - SError",
 };
 
-// Read Exception Syndrome Register
-static inline uint64_t read_esr_el1(void)
+/*
+ * ESR Exception Class strings
+ */
+static const char *esr_class_str[] = {
+	[0 ... ESR_ELx_EC_MAX]		= "UNRECOGNIZED EC",
+	[ESR_ELx_EC_UNKNOWN]		= "Unknown/Uncategorized",
+	[ESR_ELx_EC_WFx]		    = "WFI/WFE",
+	[ESR_ELx_EC_CP15_32]		= "CP15 MCR/MRC",
+	[ESR_ELx_EC_CP15_64]		= "CP15 MCRR/MRRC",
+	[ESR_ELx_EC_CP14_MR]		= "CP14 MCR/MRC",
+	[ESR_ELx_EC_CP14_LS]		= "CP14 LDC/STC",
+	[ESR_ELx_EC_FP_ASIMD]		= "ASIMD",
+	[ESR_ELx_EC_CP10_ID]		= "CP10 MRC/VMRS",
+	[ESR_ELx_EC_PAC]		    = "PAC",
+	[ESR_ELx_EC_CP14_64]		= "CP14 MCRR/MRRC",
+	[ESR_ELx_EC_BTI]		    = "BTI",
+	[ESR_ELx_EC_ILL]		    = "PSTATE.IL",
+	[ESR_ELx_EC_SVC32]		    = "SVC (AArch32)",
+	[ESR_ELx_EC_HVC32]		    = "HVC (AArch32)",
+	[ESR_ELx_EC_SMC32]		    = "SMC (AArch32)",
+	[ESR_ELx_EC_SVC64]		    = "SVC (AArch64)",
+	[ESR_ELx_EC_HVC64]		    = "HVC (AArch64)",
+	[ESR_ELx_EC_SMC64]		    = "SMC (AArch64)",
+	[ESR_ELx_EC_SYS64]		    = "MSR/MRS (AArch64)",
+	[ESR_ELx_EC_SVE]		    = "SVE",
+	[ESR_ELx_EC_ERET]		    = "ERET/ERETAA/ERETAB",
+	[ESR_ELx_EC_FPAC]		    = "FPAC",
+	[ESR_ELx_EC_SME]		    = "SME",
+	[ESR_ELx_EC_IMP_DEF]		= "EL3 IMP DEF",
+	[ESR_ELx_EC_IABT_LOW]		= "IABT (lower EL)",
+	[ESR_ELx_EC_IABT_CUR]       = "IABT (current EL)",
+	[ESR_ELx_EC_PC_ALIGN]		= "PC Alignment",
+	[ESR_ELx_EC_DABT_LOW]		= "DABT (lower EL)",
+	[ESR_ELx_EC_DABT_CUR]		= "DABT (current EL)",
+	[ESR_ELx_EC_SP_ALIGN]		= "SP Alignment",
+	[ESR_ELx_EC_MOPS]		    = "MOPS",
+	[ESR_ELx_EC_FP_EXC32]		= "FP (AArch32)",
+	[ESR_ELx_EC_FP_EXC64]		= "FP (AArch64)",
+	[ESR_ELx_EC_GCS]		    = "Guarded Control Stack",
+	[ESR_ELx_EC_SERROR]		    = "SError",
+	[ESR_ELx_EC_BREAKPT_LOW]	= "Breakpoint (lower EL)",
+	[ESR_ELx_EC_BREAKPT_CUR]	= "Breakpoint (current EL)",
+	[ESR_ELx_EC_SOFTSTP_LOW]	= "Software Step (lower EL)",
+	[ESR_ELx_EC_SOFTSTP_CUR]	= "Software Step (current EL)",
+	[ESR_ELx_EC_WATCHPT_LOW]	= "Watchpoint (lower EL)",
+	[ESR_ELx_EC_WATCHPT_CUR]	= "Watchpoint (current EL)",
+	[ESR_ELx_EC_BKPT32]		    = "BKPT (AArch32)",
+	[ESR_ELx_EC_VECTOR32]		= "Vector catch (AArch32)",
+	[ESR_ELx_EC_BRK64]		    = "BRK (AArch64)",
+};
+
+/*
+ * Get exception class string from ESR
+ */
+const char *esr_get_class_string(uint64_t esr)
 {
-    uint64_t val;
-    __asm__ volatile("mrs %0, esr_el1" : "=r"(val));
-    return val;
+    return esr_class_str[ESR_ELx_EC(esr)];
 }
 
-// Read Exception Link Register (return address)
-static inline uint64_t read_elr_el1(void)
+/*
+ * Get exception type string
+ */
+const char *exception_type_string(uint32_t type)
 {
-    uint64_t val;
-    __asm__ volatile("mrs %0, elr_el1" : "=r"(val));
-    return val;
-}
-
-// Read Saved Program Status Register
-static inline uint64_t read_spsr_el1(void)
-{
-    uint64_t val;
-    __asm__ volatile("mrs %0, spsr_el1" : "=r"(val));
-    return val;
-}
-
-// Read Fault Address Register
-static inline uint64_t read_far_el1(void)
-{
-    uint64_t val;
-    __asm__ volatile("mrs %0, far_el1" : "=r"(val));
-    return val;
+    if (type < 16)
+        return exception_names[type];
+    return "Unknown exception type";
 }
 
 // Simple hex to string conversion
@@ -67,34 +107,36 @@ static void uint64_to_hex(uint64_t value, char *buf)
     buf[18] = '\0';
 }
 
-/**
- * Generic exception handler called from assembly
- * @param type: Exception type (0-15)
- * We move the type value to register x0 before calling this function
- * which corresponds to the first argument in AArch64 calling convention.
+/*
+ * Dump detailed exception information
  */
-void exception_handler_c(uint32_t type)
+void dump_exception_info(uint32_t type, uint64_t esr, uint64_t elr,
+                         uint64_t spsr, uint64_t far)
 {
     char hex_buf[19];
-    uint64_t esr, elr, spsr, far;
+    uint32_t ec = ESR_ELx_EC(esr);
     
-    // Read exception information registers
-    esr  = read_esr_el1();
-    elr  = read_elr_el1();
-    spsr = read_spsr_el1();
-    far  = read_far_el1();
-    
-    // Print exception information
     uart_poll_puts("\n");
     uart_poll_puts("======================================\n");
     uart_poll_puts("EXCEPTION OCCURRED!\n");
     uart_poll_puts("======================================\n");
     
-    if (type < 16) {
-        uart_poll_puts("Type: ");
-        uart_poll_puts(exception_names[type]);
-        uart_poll_puts("\n");
-    }
+    /* Exception vector entry */
+    uart_poll_puts("Vector: ");
+    uart_poll_puts(exception_type_string(type));
+    uart_poll_puts("\n");
+    
+    /* Exception class from ESR */
+    uart_poll_puts("Class:  ");
+    uart_poll_puts(esr_get_class_string(esr));
+    uart_poll_puts(" (EC=0x");
+    /* Print EC in hex (2 digits) */
+    hex_buf[0] = "0123456789ABCDEF"[(ec >> 4) & 0xF];
+    hex_buf[1] = "0123456789ABCDEF"[ec & 0xF];
+    hex_buf[2] = ')';
+    hex_buf[3] = '\0';
+    uart_poll_puts(hex_buf);
+    uart_poll_puts("\n");
     
     uart_poll_puts("ESR_EL1:  ");
     uint64_to_hex(esr, hex_buf);
@@ -104,7 +146,7 @@ void exception_handler_c(uint32_t type)
     uart_poll_puts("ELR_EL1:  ");
     uint64_to_hex(elr, hex_buf);
     uart_poll_puts(hex_buf);
-    uart_poll_puts("\n");
+    uart_poll_puts(" (PC at exception)\n");
     
     uart_poll_puts("SPSR_EL1: ");
     uint64_to_hex(spsr, hex_buf);
@@ -114,11 +156,31 @@ void exception_handler_c(uint32_t type)
     uart_poll_puts("FAR_EL1:  ");
     uint64_to_hex(far, hex_buf);
     uart_poll_puts(hex_buf);
-    uart_poll_puts("\n");
+    uart_poll_puts(" (Fault address)\n");
     
     uart_poll_puts("======================================\n");
+}
+
+/**
+ * Generic exception handler called from assembly
+ * @param type: Exception type (0-15)
+ * We move the type value to register x0 before calling this function
+ * which corresponds to the first argument in AArch64 calling convention.
+ */
+void exception_handler_c(uint32_t type)
+{
+    uint64_t esr, elr, spsr, far;
     
-    // Halt the system
+    /* Read exception information registers */
+    esr  = read_esr_el1();
+    elr  = read_elr_el1();
+    spsr = read_spsr_el1();
+    far  = read_far_el1();
+    
+    /* Display exception information */
+    dump_exception_info(type, esr, elr, spsr, far);
+    
+    /* Halt the system */
     uart_poll_puts("System halted.\n");
     for (;;) {
         __asm__ volatile("wfe");
