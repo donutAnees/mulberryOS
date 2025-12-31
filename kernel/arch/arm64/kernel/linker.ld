@@ -72,8 +72,6 @@ SECTIONS
      */
     . = 0x80000;
 
-    _start = .;
-
     /*
      * .text.boot section must come first
      * Contains boot.S code with entry point
@@ -135,6 +133,10 @@ SECTIONS
      * and position the initial stack
      */
     _end = .;
+    
+    .bootstrap_stack (NOLOAD) : {
+        *(.bootstrap_stack)
+    }
 }
 
 /*
