@@ -125,11 +125,6 @@
 )
 
 /*
- * TTBR0_EL1 and TTBR1_EL1 configuration
- */
-
-
-/*
  * Page Table Entry (PTE) attributes
  */
 #define PTE_TYPE_BLOCK   0x1UL   /* bits[1:0] = 01 */

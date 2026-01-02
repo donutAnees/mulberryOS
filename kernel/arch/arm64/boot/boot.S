@@ -18,11 +18,39 @@
 //   - x0: Device Tree Blob (DTB) pointer
 // ------------------------------------------------------
 
+#include <asm/mmu.h>
+
+// --------------------------------------------------
+// Bootstrap Stack (16KB)
+// --------------------------------------------------
 .section ".bootstrap_stack", "aw", %nobits
 .align 16
 stack_bottom:
     .space 0x4000               // 16KB bootstrap stack
 stack_top:
+
+.section ".bss"
+/// --------------------------------------------------
+// Level 0 translation table (shared by TTBR0 & TTBR1)
+// --------------------------------------------------
+.align 12
+page_table_l0:
+    .space 4096 // We do not need these many entries for our Pi
+                // TODO: Optimize to have the minimal entry of 1 table or whatever
+
+// --------------------------------------------------
+// Level 1 table 
+// --------------------------------------------------
+.align 12
+page_table_l1:
+    .space 4096 // TODO: Optimize to have the minimal entry of 1 table or whatever
+
+// --------------------------------------------------
+// Level 2 table (2MB block mappings)
+// --------------------------------------------------
+.align 12
+page_table_l2:
+    .space 4096 // TODO: Optimize to have the minimal entry of 1 table or whatever
 
 .section ".text.boot"
 .globl _start
@@ -69,9 +97,11 @@ el1_entry:
     // ==============================================================================
     // Zero all uninitialized global/static variables
     // Must complete before any C code accesses these variables
-
-    ldr     x5, =__bss_start  // x5 = start of BSS
-    ldr     x6, =__bss_end    // x6 = end of BSS
+    // We substract KERNEL_VA_BASE to get physical addresses
+    // The linker places them at higher half virtual addresses
+    // ----------------------------------------------------------------------
+    ldr     x5, =__bss_start - KERNEL_VA_BASE  // x5 = start of BSS
+    ldr     x6, =__bss_end - KERNEL_VA_BASE    // x6 = end of BSS
 
 1:  
     cmp     x5, x6            // Check if done
@@ -81,19 +111,82 @@ el1_entry:
 
 2:
     // ==============================================================================
-    // Step 3: Build Page Tables
+    // Step 3: Configure MMU Registers and Set Up Page Tables
     // ==============================================================================
-    // Create identity mapping and higher-half kernel mapping
-    // Called before MMU enable; page tables stored in BSS (now zeroed)
+    // Configure MAIR, TCR, and TTBR registers before enabling MMU
+    // ----------------------------------------------------------------------
 
-    bl build_dual_map
+    ldr    x5, =TCR_EL1_VALUE
+    msr    tcr_el1, x5               // Set TCR_EL1
 
-    // ==============================================================================
-    // Step 4: Configure MMU Registers
-    // ==============================================================================
+    ldr    x5, =MAIR_EL1_VALUE
+    msr    mair_el1, x5               // Set memory attributes 
 
+    // Set TTBR0_EL1 to point to level 0 page table
+    ldr    x5, =page_table_l0 - KERNEL_VA_BASE
+    ldr    x6, =page_table_l1 - KERNEL_VA_BASE
+    ldr    x7, =page_table_l2 - KERNEL_VA_BASE
+
+    // -------------------------------------------------------------
+    // Build page tables
+    // -------------------------------------------------------------
+    // L0[0] -> L1 table
+    orr    x8, x6, #PTE_TYPE_TABLE          // table descriptor (bits[1:0] = 11)
+    str    x8, [x5]
+
+    // L1[0] -> L2 table
+    orr    x8, x7, #PTE_TYPE_TABLE          // table descriptor
+    str    x8, [x6]
+
+    // -------------------------------------------------------------
+    // Fill L2 table with 2MB blocks
+    // Raspberry Pi 3:
+    //   RAM        : 0x00000000 – 0x3EFFFFFF
+    //   Peripherals: 0x3F000000 – 0x3FFFFFFF
+    // -------------------------------------------------------------
+
+    mov    x9, #0                // L2 index = 0
+
+1:
+    // Physical address = index * 2MB
+    lsl    x10, x9, #21
+
+    // Default: Normal memory
+    ldr    x11, =PTE_BLOCK_NORMAL   // Normal WB WA, AF=1, SH=Inner
+
+    // If >= 0x3F000000 → Device memory
+    ldr    x13, =PERIPH_BASE_PA
+    cmp    x10, x13
+    b.lo   2f
+    ldr    x11, =PTE_BLOCK_DEVICE   // Device-nGnRnE, PXN+UXN
+
+2:
+    orr    x12, x10, x11
+    str    x12, [x7, x9, lsl #3]
+
+    add    x9, x9, #1
+    cmp    x9, #512               // map first 1GB (512 × 2MB)
+    b.ne   1b
+
+    msr    ttbr0_el1, x5
+    msr    ttbr1_el1, x5               // using same table for TTBR1_EL1
+
+    // ---- SCTLR_EL1: System Control Register ----
+    // Implemented in CPUECTLR register
+    mrs     x5, S3_1_C15_C2_1
+    orr     x5, x5, #(0x1 << 6)     // SMP bit for hardware coherency
+    msr     S3_1_C15_C2_1, x5
+    
+    mrs     x5, sctlr_el1
+    orr     x5, x5, #(1 << 0)       // M = 1 (Enable MMU)
+    orr     x5, x5, #(1 << 2)       // C = 1 (Enable D-cache)
+    orr     x5, x5, #(1 << 12)      // I = 1 (Enable I-cache)
+    msr     sctlr_el1, x5
+    dsb     sy                      // Ensure MMU enable completes
+    isb                             // Synchronize after enabling MMU
+    
     // ==============================================================================
-    // Step 5: Jump to Higher Half
+    // Step 4: Jump to Higher Half
     // ==============================================================================
     // MMU is now enabled with dual mapping (identity + higher-half)
     // We're still executing at low physical addresses
@@ -102,6 +195,7 @@ el1_entry:
     ldr     x5, =higher_half_entry         // Load higher-half virtual address
     br      x5                             // Branch to higher-half
 
+.section ".text.higher_half"
 higher_half_entry:
     // We are now running in higher-half kernel space
     // Virtual addresses >= 0xFFFF000000000000 are active
@@ -116,7 +210,7 @@ higher_half_entry:
     mov     sp, x5            // Set stack pointer
 
     // ==============================================================================
-    // Step 8: Jump to Kernel Entry Point
+    // Step 6: Jump to Kernel Entry Point
     // ==============================================================================
     // Transfer control to C kernel
     // kernel_main() never returns
@@ -131,17 +225,3 @@ higher_half_entry:
 halt:
     wfe                       // Wait For Event (low-power idle)
     b       halt              // Infinite loop
-
-// ==============================================================================
-// build_dual_map: Create Identity and Higher-Half Page Tables
-// ==============================================================================
-// Sets up two-level page tables:
-//   - Identity mapping: VA 0x0 → PA 0x0 (for MMU enable transition)
-//   - Higher-half mapping: VA 0xFFFF000000000000 → PA 0x0 (kernel space)
-//
-// Uses page tables allocated in BSS (already zeroed):
-//   - page_table_l0: Level 0 translation table (TTBR1_EL1 - higher half)
-//   - page_table_l1: Level 1 translation table (TTBR0_EL1 - identity)
-// ==============================================================================
-build_dual_map:
-    ret

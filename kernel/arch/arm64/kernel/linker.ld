@@ -1,29 +1,9 @@
 /*
- * IMPORTANT:
- * ----------
- * This kernel currently runs with the MMU DISABLED.
+ * Higher-half kernel linker script (AArch64)
  *
- * As a result:
- *   - All addresses are PHYSICAL addresses
- *   - There is no virtual memory
- *
- * Therefore:
- *   LINK-TIME ADDRESSES == RUNTIME ADDRESSES!! 
- *
- * The kernel MUST be linked at the exact physical address where the firmware
- * loads it. Any mismatch will result in invalid absolute references and
- * unexpected behavior like suppose you define a global variable, at compile
- * time the compiler will generate code to access it at a fixed physical and
- * later at runtime if the kernel loads at a different physical address and 
- * tries to access that variable, it will end up r/w to the wrong address.
- *
- * Once an MMU and virtual memory are introduced, this constraint can be
- * relaxed by switching to a virtual kernel address space. Until then, this
- * fixed layout is REQUIRED. I know this sucks but don't worry we will fix this.
- *
- * The Raspberry Pi firmware always loads AArch64 kernels at physical
- * address 0x80000 and jumps directly to it with the MMU disabled.
- *
+ * Kernel is:
+ *   - LOADED at PA 0x80000
+ *   - LINKED at VA 0xFFFF000000080000
  *
  * MEMORY LAYOUT (PHYSICAL ADDRESSES)
  *
@@ -65,6 +45,8 @@
 
 ENTRY(_start)
 
+KERNEL_VA_BASE = 0xFFFF000000000000;
+
 SECTIONS
 {
     /*
@@ -80,10 +62,11 @@ SECTIONS
         *(.text.boot)
     }
 
+    . += KERNEL_VA_BASE;
     /*
      * Exception vector table
      */
-    .text.vectors : {
+    .text.vectors : AT(ADDR(.text.vectors) - KERNEL_VA_BASE) {
         *(.text.vectors)
     }
 
@@ -91,7 +74,7 @@ SECTIONS
      * Main kernel code
      * All compiled C functions go here
      */
-    .text : {
+    .text : AT(ADDR(.text) - KERNEL_VA_BASE) {
         *(.text)
         *(.text.*)
     }
@@ -100,7 +83,7 @@ SECTIONS
      * Read-only data
      * String literals, const variables, etc.
      */
-    .rodata : ALIGN(8) {
+    .rodata ALIGN(8) : AT(ADDR(.rodata) - KERNEL_VA_BASE) {
         *(.rodata)
         *(.rodata.*)
     }
@@ -109,7 +92,7 @@ SECTIONS
      * Initialized data
      * Global and static variables with initial values
      */
-    .data : ALIGN(8) {
+    .data ALIGN(8) : AT(ADDR(.data) - KERNEL_VA_BASE) {
         *(.data)
         *(.data.*)
     }
@@ -119,27 +102,12 @@ SECTIONS
      * Global and static variables without initializers
      * Must be zeroed by boot.S before C code runs
      */
-    .bss : ALIGN(16) {
+    .bss ALIGN(16) : AT(ADDR(.bss) - KERNEL_VA_BASE) {
         __bss_start = .;
         *(.bss)
         *(.bss.*)
         *(COMMON)
+        *(.bootstrap_stack)
         __bss_end = .;
     }
-
-    /*
-     * End of kernel marker
-     * Used by boot.S to calculate kernel size
-     * and position the initial stack
-     */
-    _end = .;
-    
-    .bootstrap_stack (NOLOAD) : {
-        *(.bootstrap_stack)
-    }
 }
-
-/*
- * Calculate BSS size for reference
- */
-__bss_size = (__bss_end - __bss_start);
