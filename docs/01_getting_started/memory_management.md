@@ -148,7 +148,7 @@ The characteristics of large and small blocks are as follows:
 - Large blocks require fewer levels of reads to translate than small blocks. Plus, large blocks are more efficient to cache in the TLBs.
 - Small blocks give software fine-grain control over memory allocation. However, small blocks are less efficient to cache in the TLBs. Caching is less efficient because small blocks require multiple reads through the levels to translate.
 - To manage this trade-off, an OS must balance the efficiency of using large mappings against the flexibility of using smaller mappings for optimum performance.
-
+```
 +--------+--------+--------+--------+--------+--------+--------+--------+
 |63    56|55    48|47    40|39    32|31    24|23    16|15     8|7      0|
 +--------+--------+--------+--------+--------+--------+--------+--------+
@@ -160,7 +160,7 @@ The characteristics of large and small blocks are as follows:
  |                 |         +---------------------> [38:30] L1 index
  |                 +-------------------------------> [47:39] L0 index
  +-------------------------------------------------> [63] TTBR0/1
-
+```
 Page offset = 12 bits → 4 KB page
 
 #### AArch64 (4 KB granule) address translation breakdown
