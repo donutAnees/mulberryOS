@@ -42,7 +42,9 @@ C_SRC := \
 	init/main.c \
 	arch/arm64/kernel/exception_handler.c \
 	drivers/tty/serial/serial_core.c \
-	drivers/tty/serial/amba-pl011.c 
+	drivers/tty/serial/amba-pl011.c \
+	kernel/irq/irq.c \
+	kernel/irq/irq_chip.c 
 
 # ============================================================
 # Objects

@@ -8,7 +8,7 @@
 
 /* PL011 Base Address */
 // TODO: Implement DTB parsing to get base addresses dynamically
-# define PL011_UART0_BASE      0x3F201000  /* Raspberry Pi Zero 2 W (BCM2837) - ARM CPU address */
+# define PL011_UART0_BASE      0x3F201000  /* GPU peripheral space - UART0 */
 
 /* PL011 UART Clock and Baud Rate Calculation Macros */
 #define PL011_UART_CLOCK_HZ 48000000U
