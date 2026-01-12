@@ -44,7 +44,8 @@ C_SRC := \
 	drivers/tty/serial/serial_core.c \
 	drivers/tty/serial/amba-pl011.c \
 	kernel/irq/irq.c \
-	kernel/irq/irq_chip.c 
+	kernel/irq/irq_chip.c \
+	drivers/irqchip/bcm2837_irq.c
 
 # ============================================================
 # Objects

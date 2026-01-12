@@ -140,9 +140,10 @@ el1_entry:
 
     // -------------------------------------------------------------
     // Fill L2 table with 2MB blocks
-    // Raspberry Pi 3:
-    //   RAM        : 0x00000000 – 0x3EFFFFFF
-    //   Peripherals: 0x3F000000 – 0x3FFFFFFF
+    // Raspberry Pi 3 and Zero 2W address map:
+    //   RAM                : 0x00000000 – 0x3DFFFFFF
+    //   GPU Peripherals    : 0x3E000000 – 0x3FFFFFFF
+    //   Local Peripherals  : 0x40000000 – 0x4001FFFF (ARM timer, IRQs, mailboxes)
     // -------------------------------------------------------------
 
     mov    x9, #0                // L2 index = 0
@@ -151,11 +152,17 @@ el1_entry:
     // Physical address = index * 2MB
     lsl    x10, x9, #21
 
-    // Default: Normal memory
+    // Default: Normal memory (RAM)
     ldr    x11, =PTE_BLOCK_NORMAL   // Normal WB WA, AF=1, SH=Inner
 
-    // If >= 0x3F000000 → Device memory
-    ldr    x13, =PERIPH_BASE_PA
+    // Check if >= 0x3E000000 (GPU peripherals)
+    ldr    x13, =GPU_PERIPH_BASE_PA
+    cmp    x10, x13
+    b.lo   2f
+    ldr    x11, =PTE_BLOCK_DEVICE   // Device-nGnRnE, PXN+UXN
+    
+    // Check if >= 0x40000000 (Local ARM peripherals)
+    ldr    x13, =LOCAL_PERIPH_BASE_PA
     cmp    x10, x13
     b.lo   2f
     ldr    x11, =PTE_BLOCK_DEVICE   // Device-nGnRnE, PXN+UXN

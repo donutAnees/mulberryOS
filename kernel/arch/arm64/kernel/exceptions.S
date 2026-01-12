@@ -163,8 +163,7 @@ el1_sp0_sync:
 
 el1_sp0_irq:
     KERNEL_ENTRY
-    mov     x0, #1
-    bl      exception_handler_c
+    bl      irq_handler_c
     KERNEL_EXIT
 
 el1_sp0_fiq:
@@ -187,8 +186,7 @@ el1_spx_sync:
 
 el1_spx_irq:
     KERNEL_ENTRY
-    mov     x0, #5
-    bl      exception_handler_c
+    bl      irq_handler_c
     KERNEL_EXIT
 
 el1_spx_fiq:

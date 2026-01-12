@@ -8,7 +8,8 @@
 #endif
 
 #define KERNEL_VA_BASE    _UL(0xffff000000000000)
-#define PERIPH_BASE_PA    _UL(0x3F000000)
+#define GPU_PERIPH_BASE_PA    _UL(0x3E000000)  /* GPU peripheral access */
+#define LOCAL_PERIPH_BASE_PA  _UL(0x40000000)  /* Local peripherals (ARM timer, IRQs, mailboxes) */
 
 /*
  * Page table levels for 4KB granule, 48-bit VA
