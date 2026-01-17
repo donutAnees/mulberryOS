@@ -59,6 +59,46 @@ It will be handling the following interrupts:
 - IRQ Pending (0x060 + cpu * 4): Per-CPU pending interrupt status
 - PMU Routing (0x010/0x014): PMU interrupt routing control
 
+### High-Level Architecture
+
+#### System Overview
+```
+Hardware IRQ Signal
+        ↓
+CPU Exception Vector (Assembly)
+        ↓
+irq_handler_c() (IRQ Subsystem Bridge)
+        ↓
+generic_handle_irq() (Virtual IRQ Dispatcher) 
+        ↓
+Flow Handler (Interrupt Policy)
+        ↓
+handle_irq_event() (Action Chain Processor)
+        ↓
+Device Handlers (Driver-specific handlers)
+```
+
+#### Key Components
+
+**1. IRQ Descriptor (`struct irq_desc`)**
+- Central data structure linking all IRQ components
+- Contains hardware IRQ data, chip operations, flow handler, and device action chain
+- One descriptor per virtual IRQ number
+
+**2. IRQ Chip (`struct irq_chip`)**
+- Hardware abstraction for interrupt controllers
+- Provides `irq_mask()` and `irq_unmask()` operations
+- Examples: BCM2837 timer chip, PMU chip, GPU chip
+
+**3. Flow Handlers (`irq_flow_handler_t`)**
+- Implement interrupt handling **policies** (not device-specific logic)
+- `handle_simple_irq()`: Basic flow for simple interrupts for now
+
+**4. IRQ Actions (`struct irqaction`)**
+- Device-specific interrupt handlers registered by drivers
+- Supports multiple handlers per IRQ
+- Linked list structure for handler chains
+
 ## Reference
 - [ARM GIC Fundamentals](https://developer.arm.com/documentation/198123/0302/Arm-GIC-fundamentals)
 - [Raspberry Pi BCM2826 Peripherals](https://datasheets.raspberrypi.com/bcm2836/bcm2836-peripherals.pdf)
