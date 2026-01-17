@@ -159,14 +159,14 @@ int bcm2837_irq_init(void)
     // TODO: Ideally we should be assigning a virtual IRQ number for each hardware IRQ
     // Linux does this using irq_domain, we can implement something similar later
     
-    // Register timer IRQs
+    // Register timer IRQs with simple flow handler
     for (unsigned int i = LOCAL_IRQ_CNTPSIRQ; i <= LOCAL_IRQ_CNTVIRQ; i++) {
-        irq_set_chip_and_handler(i, &bcm2837_timer_irqchip, NULL);
+        irq_set_chip_and_handler(i, &bcm2837_timer_irqchip, handle_simple_irq);
     }
-    // Register PMU IRQ
-    irq_set_chip_and_handler(LOCAL_IRQ_PMU_FAST, &bcm2837_pmu_irqchip, NULL);
-    // Register GPU IRQ
-    irq_set_chip_and_handler(LOCAL_IRQ_GPU_FAST, &bcm2837_gpu_irqchip, NULL);
+    // Register PMU IRQ with simple flow handler
+    irq_set_chip_and_handler(LOCAL_IRQ_PMU_FAST, &bcm2837_pmu_irqchip, handle_simple_irq);
+    // Register GPU IRQ with simple flow handler
+    irq_set_chip_and_handler(LOCAL_IRQ_GPU_FAST, &bcm2837_gpu_irqchip, handle_simple_irq);
 
     // Set this as the main IRQ handler
     set_handle_irq(bcm2836_arm_irqchip_handle_irq);

@@ -1,6 +1,17 @@
 #ifndef _KERNEL_IRQ_CHIP_H
 #define _KERNEL_IRQ_CHIP_H
 
+/* Forward declarations */
+struct irq_desc;
+
+/*
+ * IRQ return codes - returned by interrupt handlers
+ */
+typedef enum irqreturn {
+    IRQ_NONE        = 0,    /* Interrupt was not from this device */
+    IRQ_HANDLED     = 1,    /* Interrupt was handled successfully */
+} irqreturn_t;
+
 /* 
 * irq_data represents one interrupt line in the system.
 * for now it only contains the hardware IRQ number.
@@ -28,32 +39,74 @@ struct irq_chip {
  * IRQ handler function type
  * @irq: The IRQ number
  * @data: Private data passed during registration
+ * Returns: IRQ_HANDLED if interrupt was from this device, IRQ_NONE otherwise
  */
-typedef void (*irq_handler_t)(unsigned int irq, void *data);
+typedef irqreturn_t (*irq_handler_t)(unsigned int irq, void *data);
+
+/*
+ * IRQ flow handler function type
+ * Flow handlers implement the policy for handling different types of interrupts
+ */
+typedef void (*irq_flow_handler_t)(struct irq_desc *desc);
+
+/* IRQ flags for request_irq() */
+#define IRQF_SHARED     1  /* IRQ is shared across multiple devices */
+#define IRQF_TIMER      2  /* Timer interrupt */
+#define IRQF_PERCPU     3  /* Per-CPU interrupt */
+
+/*
+ * IRQaction - represents a registered interrupt handler
+ * This allows multiple handlers per IRQ (shared interrupts)
+ */
+struct irqaction {
+    irq_handler_t           handler;        /* Device interrupt handler */
+    void                    *dev_id;        /* Device identifier */
+    struct irqaction        *next;          /* Next handler in chain */
+    unsigned long           flags;          /* IRQ flags (IRQF_SHARED, etc.) */
+};
 
 /*
  * irq_desc describes a single IRQ line, linking together
- * the chip, handler, and any private data.
+ * the chip, flow handler, and device action chain.
  */
 struct irq_desc {
     struct irq_data         irq_data;       /* IRQ data (hwirq, etc.) */
     struct irq_chip         *chip;          /* IRQ chip for this IRQ */
-    irq_handler_t           handler;        /* High-level handler */
-    void                    *handler_data;  /* Data passed to handler */
+    irq_flow_handler_t      handle_irq;     /* Flow handler (policy) */
+    struct irqaction        *action;        /* Device handler chain */
+    unsigned int            irq_count;      /* Total interrupt count */
+    const char              *name;          /* IRQ name */
 };
 
 /* Maximum number of IRQs supported */
 #define NR_IRQS 12
 
 /*
+ * Flow handlers - implement different interrupt handling policies
+ */
+void handle_simple_irq(struct irq_desc *desc);
+
+/*
+ * IRQ management functions
+ */
+int request_irq(unsigned int irq, irq_handler_t handler, unsigned long flags,
+                void *dev_id);
+void free_irq(unsigned int irq, void *dev_id);
+
+/*
+ * IRQ enable/disable functions
+ */
+void enable_irq(unsigned int irq);
+void disable_irq(unsigned int irq);
+
+/*
  * irq_set_chip_and_handler - Set both chip and handler for an IRQ
  * @irq: IRQ number
  * @chip: Pointer to irq_chip structure
- * @handler: Handler function
- * function to set both chip and handler at once.
+ * @handler: Flow handler function
  */
 int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
-                             irq_handler_t handler);
+                             irq_flow_handler_t handler);
 
 /*
  * irq_get_desc - Get the IRQ descriptor for an IRQ number
@@ -63,12 +116,19 @@ int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
 struct irq_desc *irq_get_desc(unsigned int irq);
 
 /*
- * generic_handle_irq - Call the handler for an IRQ
+ * generic_handle_irq - Call the flow handler for an IRQ
  * @irq: IRQ number
  *
- * Called by the low-level IRQ code to dispatch to the registered handler.
+ * Called by the low-level IRQ code to dispatch to the flow handler.
  */
 void generic_handle_irq(unsigned int irq);
+
+/*
+ * handle_irq_event - Process the IRQ action chain
+ * @desc: IRQ descriptor
+ * Returns: IRQ_HANDLED if any handler handled the IRQ, IRQ_NONE otherwise
+ */
+irqreturn_t handle_irq_event(struct irq_desc *desc);
 
 /*
  * irq_init - Initialize the IRQ subsystem
