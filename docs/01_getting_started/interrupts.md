@@ -31,6 +31,50 @@ Each interrupt source is identified by an ID number, which is referred to as an 
 **NOTE**: T_T Just realized that Raspberry Pi Zero 2 W doesn have a GIC but rather uses the broadcom interrupt controller. Will have this section here since I already wrote it.
 
 ## Interrupt Controller - Broadcom BCM2836/7 Interrupt Controller
+
+The BCM2836/7 SoC uses a **cascaded interrupt architecture** with two distinct interrupt controllers:
+
+1. **Local Interrupt Controller** - Per-CPU private interrupts (timers, mailbox, PMU)
+2. **ARMCTRL (Global) Interrupt Controller** - Shared peripheral interrupts (UART, SPI, USB, etc.)
+
+### Hardware IRQ Numbers Are Controller-Specific
+
+Each interrupt controller has its own **hardware IRQ number (hwirq)** namespace. This means:
+- Local controller hwirq 0 = CNTPSIRQ (Secure Timer)
+- ARMCTRL hwirq 0 = Something completely different (a GPU peripheral)
+
+These are NOT the same interrupt! The hardware IRQ number only has meaning within the context of its parent controller.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CPU Exception Entry                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Local Interrupt Controller                     │
+│                  (Base: 0x40000000)                         │
+│                                                             │
+│  hwirq 0: CNTPSIRQ    hwirq 4: Mailbox0   hwirq 8: GPU_FAST │
+│  hwirq 1: CNTPNSIRQ   hwirq 5: Mailbox1   hwirq 9: PMU      │
+│  hwirq 2: CNTHPIRQ    hwirq 6: Mailbox2                     │
+│  hwirq 3: CNTVIRQ     hwirq 7: Mailbox3                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ GPU_FAST (hwirq 8) cascades to:
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│          ARMCTRL (Global) Interrupt Controller              │
+│                  (Base: 0x3F00B200)                         │
+│                                                             │
+│  Bank 0 (hwirq 0-7):   ARM/local-related sources            │
+│  Bank 1 (hwirq 0-31):  GPU peripheral interrupts 0-31       │
+│  Bank 2 (hwirq 0-31):  GPU peripheral interrupts 32-63      │
+│                                                             │
+│  Examples: UART, SPI, I2C, USB, SD card, etc.               │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Local Interrupt Controller
 The local interrupt controller is a CPU-local interrupt management unit present in the BCM2836/7 SoC. Unlike the main interrupt controller that handles global device interrupts, the local controller manages interrupts that are private to each CPU core.
 
@@ -59,7 +103,43 @@ It will be handling the following interrupts:
 - IRQ Pending (0x060 + cpu * 4): Per-CPU pending interrupt status
 - PMU Routing (0x010/0x014): PMU interrupt routing control
 
+### ARMCTRL (Global) Interrupt Controller
+
+The ARMCTRL controller aggregates interrupts from GPU and SoC peripherals. It does **not** deliver interrupts directly to the CPU - instead, it asserts a signal to the Local controller's `GPU_FAST` (hwirq 8) line, which then triggers the CPU exception.
+
+When handling a `GPU_FAST` interrupt, the local controller must read ARMCTRL's pending registers to determine which peripheral actually interrupted.
+
 ### High-Level Architecture
+
+#### IRQ Descriptors and Virtual IRQ Numbers
+
+The kernel maintains an array of `irq_desc` structures, one per **virtual IRQ number (virq)**. The virq is a system-wide unique identifier that the kernel uses internally, separate from the hardware IRQ numbers.
+
+```c
+struct irq_desc {
+    struct irq_data    irq_data;   // Contains hwirq
+    struct irq_chip    *chip;      // Controller-specific operations
+    irq_flow_handler_t handle_irq; // Flow handler (level/edge/etc.)
+    struct irqaction   *action;    // Registered device handlers
+};
+```
+
+Each `irq_desc` links:
+- **irq_data.hwirq**: The hardware IRQ number (controller-specific)
+- **chip**: Pointer to the controller's mask/unmask operations
+- **action**: Chain of registered device interrupt handlers
+
+#### Current Implementation: Simple Offset Mapping
+
+Since both controllers have overlapping hwirq namespaces (both start at 0), we need a way to map them to unique virq numbers. 
+
+**HACK**: Currently using a simple offset:
+```
+Local controller:  virq = hwirq          (virq 0-9)
+ARMCTRL:           virq = hwirq + 16     (virq 16+)
+```
+
+**TODO**: The proper solution is to implement `irq_domain` (like Linux) where each controller registers a domain that handles hwirq→virq translation. This allows clean namespace separation without hardcoded offsets.
 
 #### System Overview
 ```
