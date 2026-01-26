@@ -33,6 +33,7 @@ struct irq_chip {
     const char *name;
     void (*irq_mask)(struct irq_data *d);
     void (*irq_unmask)(struct irq_data *d);
+    void (*irq_ack)(struct irq_data *d);
 };
 
 /*
@@ -79,12 +80,24 @@ struct irq_desc {
 };
 
 /* Maximum number of IRQs supported */
-#define NR_IRQS 12
+#define NR_IRQS 128
+
+/*
+ * HACK: Simple IRQ offset for ARMCTRL controller to avoid collision
+ * with local interrupt controller IRQs (0-9).
+ *
+ * TODO: This is not the right way to handle multiple interrupt controllers.
+ * We should implement proper irq_domain mapping (like Linux) where each
+ * interrupt controller has its own domain that translates hardware IRQ
+ * numbers (hwirq) to system-wide virtual IRQ numbers (virq).
+ */
+#define ARMCTRL_IRQ_OFFSET  16
 
 /*
  * Flow handlers - implement different interrupt handling policies
  */
 void handle_simple_irq(struct irq_desc *desc);
+void handle_level_irq(struct irq_desc *desc);
 
 /*
  * IRQ management functions
@@ -100,6 +113,11 @@ void enable_irq(unsigned int irq);
 void disable_irq(unsigned int irq);
 
 /*
+ * IRQ mask and acknowledge interrupt
+ */
+void irq_mask_and_ack(struct irq_desc *d);
+
+/*
  * irq_set_chip_and_handler - Set both chip and handler for an IRQ
  * @irq: IRQ number
  * @chip: Pointer to irq_chip structure
@@ -107,6 +125,14 @@ void disable_irq(unsigned int irq);
  */
 int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
                              irq_flow_handler_t handler);
+
+/*
+ * irq_set_chained_handler - Set a chained flow handler for an IRQ
+ * @irq: IRQ number
+ * @handler: Chained flow handler function
+ */                             
+int irq_set_chained_handler(unsigned int irq,
+                                 irq_flow_handler_t handler);
 
 /*
  * irq_get_desc - Get the IRQ descriptor for an IRQ number

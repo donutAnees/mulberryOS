@@ -34,6 +34,17 @@ int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
     return 0;
 }
 
+int irq_set_chained_handler(unsigned int irq,
+                                 irq_flow_handler_t handler)
+{
+    struct irq_desc *desc = irq_get_desc(irq);
+    if (!desc)
+        return -1;
+
+    desc->handle_irq = handler;
+    return 0;
+}
+
 void generic_handle_irq(unsigned int irq)
 {
     struct irq_desc *desc = irq_get_desc(irq);
@@ -66,12 +77,34 @@ irqreturn_t handle_irq_event(struct irq_desc *desc)
     return ret;
 }
 
+void irq_mask_and_ack(struct irq_desc *d)
+{
+    if (d->chip && d->chip->irq_mask)
+        d->chip->irq_mask(&d->irq_data);
+    
+    if (d->chip && d->chip->irq_ack)
+        d->chip->irq_ack(&d->irq_data);
+}
+
 /* Simple flow handler for basic interrupts */
 void handle_simple_irq(struct irq_desc *desc)
 {
     if (desc->action) {
         handle_irq_event(desc);
     }
+}
+
+/* Level handler, the hardware line will stay asserted until the device clears the condition
+ * to stop anymore interrupts firing, we will mask the IRQ and then acknowledge it
+ * and then unmask it after handling
+ */
+void handle_level_irq(struct irq_desc *desc)
+{
+    irq_mask_and_ack(desc);
+    if (desc->action) {
+        handle_irq_event(desc);
+    }
+    enable_irq(desc->irq_data.hwirq);
 }
 
 /* Helper function to allocate irqaction */
