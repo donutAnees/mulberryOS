@@ -46,11 +46,18 @@ page_table_l1:
     .space 4096 // TODO: Optimize to have the minimal entry of 1 table or whatever
 
 // --------------------------------------------------
-// Level 2 table (2MB block mappings)
+// Level 2 table (2MB block mappings) - First GB
 // --------------------------------------------------
 .align 12
 page_table_l2:
-    .space 4096 // TODO: Optimize to have the minimal entry of 1 table or whatever
+    .space 4096 // Covers 0x00000000 - 0x3FFFFFFF
+
+// --------------------------------------------------
+// Level 2 table - Second GB (for local peripherals)
+// --------------------------------------------------
+.align 12
+page_table_l2_second:
+    .space 4096 // Covers 0x40000000 - 0x7FFFFFFF
 
 .section ".text.boot"
 .globl _start
@@ -126,6 +133,7 @@ el1_entry:
     ldr    x5, =page_table_l0 - KERNEL_VA_BASE
     ldr    x6, =page_table_l1 - KERNEL_VA_BASE
     ldr    x7, =page_table_l2 - KERNEL_VA_BASE
+    ldr    x14, =page_table_l2_second - KERNEL_VA_BASE
 
     // -------------------------------------------------------------
     // Build page tables
@@ -134,9 +142,13 @@ el1_entry:
     orr    x8, x6, #PTE_TYPE_TABLE          // table descriptor (bits[1:0] = 11)
     str    x8, [x5]
 
-    // L1[0] -> L2 table
+    // L1[0] -> L2 table (first GB: 0x00000000 - 0x3FFFFFFF)
     orr    x8, x7, #PTE_TYPE_TABLE          // table descriptor
     str    x8, [x6]
+
+    // L1[1] -> L2 second table (second GB: 0x40000000 - 0x7FFFFFFF)
+    orr    x8, x14, #PTE_TYPE_TABLE
+    str    x8, [x6, #8]                     // L1 entry 1
 
     // -------------------------------------------------------------
     // Fill L2 table with 2MB blocks
@@ -152,17 +164,11 @@ el1_entry:
     // Physical address = index * 2MB
     lsl    x10, x9, #21
 
-    // Default: Normal memory (RAM)
+    // Default: Normal memory
     ldr    x11, =PTE_BLOCK_NORMAL   // Normal WB WA, AF=1, SH=Inner
 
     // Check if >= 0x3E000000 (GPU peripherals)
     ldr    x13, =GPU_PERIPH_BASE_PA
-    cmp    x10, x13
-    b.lo   2f
-    ldr    x11, =PTE_BLOCK_DEVICE   // Device-nGnRnE, PXN+UXN
-    
-    // Check if >= 0x40000000 (Local ARM peripherals)
-    ldr    x13, =LOCAL_PERIPH_BASE_PA
     cmp    x10, x13
     b.lo   2f
     ldr    x11, =PTE_BLOCK_DEVICE   // Device-nGnRnE, PXN+UXN
@@ -174,6 +180,15 @@ el1_entry:
     add    x9, x9, #1
     cmp    x9, #512               // map first 1GB (512 × 2MB)
     b.ne   1b
+
+    // -------------------------------------------------------------
+    // Fill second L2 table (for local peripherals at 0x40000000)
+    // Only need first entry for 0x40000000 - 0x401FFFFF
+    // -------------------------------------------------------------
+    ldr    x10, =LOCAL_PERIPH_BASE_PA   // 0x40000000
+    ldr    x11, =PTE_BLOCK_DEVICE       // Device memory
+    orr    x12, x10, x11
+    str    x12, [x14]                   // L2_second[0] = 0x40000000 block
 
     msr    ttbr0_el1, x5
     msr    ttbr1_el1, x5               // using same table for TTBR1_EL1
