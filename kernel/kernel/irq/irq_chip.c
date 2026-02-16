@@ -6,6 +6,7 @@ static struct irq_desc irq_desc_table[NR_IRQS];
 void irq_init(void)
 {
     for (unsigned int i = 0; i < NR_IRQS; i++) {
+        irq_desc_table[i].irq_data.irq = i;
         irq_desc_table[i].irq_data.hwirq = i;
         irq_desc_table[i].chip = NULL;
         irq_desc_table[i].handle_irq = NULL;
@@ -31,6 +32,16 @@ int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
 
     desc->chip = chip;
     desc->handle_irq = handler;
+    return 0;
+}
+
+int irq_set_hwirq(unsigned int virq, unsigned int hwirq)
+{
+    struct irq_desc *desc = irq_get_desc(virq);
+    if (!desc)
+        return -1;
+
+    desc->irq_data.hwirq = hwirq;
     return 0;
 }
 
@@ -104,7 +115,7 @@ void handle_level_irq(struct irq_desc *desc)
     if (desc->action) {
         handle_irq_event(desc);
     }
-    enable_irq(desc->irq_data.hwirq);
+    enable_irq(desc->irq_data.irq);
 }
 
 /* Helper function to allocate irqaction */

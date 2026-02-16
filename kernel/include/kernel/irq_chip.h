@@ -14,9 +14,11 @@ typedef enum irqreturn {
 
 /* 
 * irq_data represents one interrupt line in the system.
-* for now it only contains the hardware IRQ number.
+* @irq: Virtual IRQ number (index into irq_desc_table)
+* @hwirq: Controller-local hardware IRQ number
 */
 struct irq_data {
+    unsigned int irq;       /* virtual IRQ number (table index) */
     unsigned int hwirq;     /* hardware IRQ number */
 };
 
@@ -119,12 +121,23 @@ void irq_mask_and_ack(struct irq_desc *d);
 
 /*
  * irq_set_chip_and_handler - Set both chip and handler for an IRQ
- * @irq: IRQ number
+ * @irq: Virtual IRQ number (index into irq_desc_table)
  * @chip: Pointer to irq_chip structure
  * @handler: Flow handler function
  */
 int irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
                              irq_flow_handler_t handler);
+
+/*
+ * irq_set_hwirq - Set the controller-local hardware IRQ for a virtual IRQ
+ * @virq: Virtual IRQ number (index into irq_desc_table)
+ * @hwirq: Controller-local hardware IRQ number
+ *
+ * Stores the real hardware IRQ in irq_data.hwirq so that chip callbacks
+ * (mask/unmask) receive the controller-local IRQ number directly.
+ * This is a lightweight stand-in for irq_domain mapping.
+ */
+int irq_set_hwirq(unsigned int virq, unsigned int hwirq);
 
 /*
  * irq_set_chained_handler - Set a chained flow handler for an IRQ
