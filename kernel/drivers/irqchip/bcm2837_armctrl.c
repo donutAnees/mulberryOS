@@ -48,6 +48,11 @@ struct bcm2837_armctrl_intc {
 
 static struct bcm2837_armctrl_intc intc;
 
+/*
+ * d->hwirq holds the controller-local hardware IRQ, set via
+ * irq_set_hwirq() during init.  Chip callbacks use it directly
+ * to compute the correct bank and bit for the enable/disable registers.
+ */
 static void bcm2837_armctrl_mask_irq(struct irq_data *d)
 {
 	*intc.disable[HWIRQ_BANK(d->hwirq)] = HWIRQ_BIT(d->hwirq);
@@ -87,10 +92,17 @@ int bcm2837_armctrl_init(void)
         intc.enable[b] = (volatile uint32_t *)(intc.base + reg_enable[b]);
         intc.disable[b] = (volatile uint32_t *)(intc.base + reg_disable[b]);
         
+        /*
+         * Map each ARMCTRL hardware IRQ to a virtual IRQ by adding
+         * ARMCTRL_IRQ_OFFSET (16), so ARMCTRL IRQs occupy table
+         * indices 16+ and dont collide with the local interrupt
+         * controller's IRQs (0-9).
+         */
         for (int i = 0; i < bank_irqs[b]; i++) {
             unsigned int hwirq = ((b << 5) | i); // b * 32 + i
             unsigned int virq = hwirq + ARMCTRL_IRQ_OFFSET;
             irq_set_chip_and_handler(virq, &armctrl_chip, handle_level_irq);
+            irq_set_hwirq(virq, hwirq);
         }
     }
     
