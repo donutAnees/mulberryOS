@@ -1,10 +1,13 @@
 #include <types.h>
 #include <serial_core.h>
 #include <kernel/irq_chip.h>
+#include <asm/irqflags.h>
 
 extern void pl011_register(void);
 extern void install_exception_vectors(void);
 extern int bcm2837_irq_init(void);
+extern int bcm2837_armctrl_init(void);
+extern int bcm2837_timer_init(void);
 
 static inline unsigned int current_el(void)
 {
@@ -38,17 +41,27 @@ void kernel_main(void)
     uart_poll_puts("Initializing IRQ subsystem...\n");
     irq_init();
 
-    // Initialize BCM2837 interrupt controller
+    // Initialize BCM2837 local interrupt controller
     uart_poll_puts("Initializing BCM2837 IRQ controller...\n");
     bcm2837_irq_init();
+    
+    // Initialize ARMCTRL (GPU peripheral interrupts)
+    uart_poll_puts("Initializing ARMCTRL interrupt controller...\n");
+    bcm2837_armctrl_init();
     uart_poll_puts("IRQ initialization complete.\n");
+
+    // Initialize System Timer
+    uart_poll_puts("Initializing BCM2837 System Timer...\n");
+    bcm2837_timer_init();
+    uart_poll_puts("System Timer initialized.\n");
 
     uart_poll_puts("\nKernel initialization complete.\n");
     uart_poll_puts("Entering idle loop...\n");
     uart_poll_puts("========================================\n");
+    local_irq_enable();
 
     /* Main idle loop */
     for (;;) {
-        __asm__ volatile("wfe");
+        __asm__ volatile("wfi");
     }
 }
