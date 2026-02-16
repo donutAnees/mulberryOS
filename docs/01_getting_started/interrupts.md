@@ -133,13 +133,32 @@ Each `irq_desc` links:
 
 Since both controllers have overlapping hwirq namespaces (both start at 0), we need a way to map them to unique virq numbers. 
 
-**HACK**: Currently using a simple offset:
+**HACK**: Currently using a simple offset + `irq_set_hwirq()`:
 ```
-Local controller:  virq = hwirq          (virq 0-9)
-ARMCTRL:           virq = hwirq + 16     (virq 16+)
+Local controller:  virq = hwirq          (virq 0-9, hwirq unchanged)
+ARMCTRL:           virq = hwirq + 16     (virq 16+, irq_set_hwirq stores real hwirq)
 ```
 
+`irq_set_hwirq(virq, real_hwirq)` writes the controller-local hwirq into `irq_data.hwirq` so chip callbacks (mask/unmask) use it directly without offset arithmetic.
+
 **TODO**: The proper solution is to implement `irq_domain` (like Linux) where each controller registers a domain that handles hwirq→virq translation. This allows clean namespace separation without hardcoded offsets.
+
+#### hwirq vs virq Mapping
+
+`irq_init()` initialises every `irq_desc` with `hwirq = table_index`.
+For the local controller this is fine (virq == hwirq), but for ARMCTRL
+the two diverge. We use `irq_set_hwirq(virq, real_hwirq)` during
+ARMCTRL init to fix up the stored hwirq so chip callbacks (mask/unmask)
+receive the controller-local value directly.
+
+```c
+// In bcm2837_armctrl_init():
+irq_set_chip_and_handler(virq, &armctrl_chip, handle_level_irq);
+irq_set_hwirq(virq, hwirq);   // store real ARMCTRL hwirq
+```
+
+When `irq_domain` is implemented, the domain's `.map` callback will
+set hwirq instead, and `irq_set_hwirq()` can be retired.
 
 #### System Overview
 ```
@@ -173,11 +192,57 @@ Device Handlers (Driver-specific handlers)
 **3. Flow Handlers (`irq_flow_handler_t`)**
 - Implement interrupt handling **policies** (not device-specific logic)
 - `handle_simple_irq()`: Basic flow for simple interrupts for now
+- `handle_level_irq()`: Masks and acks before handling, used for level-triggered (ARMCTRL) interrupts
 
 **4. IRQ Actions (`struct irqaction`)**
 - Device-specific interrupt handlers registered by drivers
 - Supports multiple handlers per IRQ
 - Linked list structure for handler chains
+
+### Full Interrupt Flow: System Timer 3 Example
+
+```
+1. System Timer compare register matches counter
+        ↓
+2. BCM2837 System Timer asserts IRQ line (GPU IRQ 3)
+        ↓
+3. ARMCTRL latches pending bit: bank 1, bit 3 (hwirq 35)
+   ARMCTRL asserts GPU_FAST output to Local controller
+        ↓
+4. Local controller sets bit 8 (GPU_FAST) in IRQ pending register
+   CPU takes IRQ exception
+        ↓
+5. el1_spx_irq (exceptions.S)
+   → kernel_entry (save registers)
+   → bl irq_handler_c
+        ↓
+6. irq_handler_c() → handle_arch_irq()
+   = bcm2836_arm_irqchip_handle_irq()
+   Reads LOCAL_IRQ_PENDING for this CPU
+   Finds bit 8 set → generic_handle_irq(8)
+        ↓
+7. irq_desc[8].handle_irq = bcm2837_chained_armctrl_irq
+   (Chained handler — does NOT call action chain)
+   Iterates all 3 ARMCTRL pending registers
+   Finds bank 1 bit 3 → virq = 35 + 16 = 51
+   → generic_handle_irq(51)
+        ↓
+8. irq_desc[51].handle_irq = handle_level_irq
+   → irq_mask_and_ack(desc)        [armctrl_chip.irq_mask(hwirq=35)]
+   → handle_irq_event(desc)
+        ↓
+9. Walks action chain for virq 51
+   → bcm2837_timer_interrupt_handler(hwirq=35, dev_id=&bcm_timer)
+     - Checks CS register match flag for channel 3
+     - Clears match flag
+     - Calls event_handler = tick_periodic_clockevent()
+       → do_timer(1)                     [update jiffies]
+       → set_next_event(10000, dev)      [program next tick in 10ms]
+        ↓
+10. handle_level_irq → enable_irq(51)   [armctrl_chip.irq_unmask(hwirq=35)]
+        ↓
+11. kernel_exit (restore registers, eret)
+```
 
 ## Reference
 - [ARM GIC Fundamentals](https://developer.arm.com/documentation/198123/0302/Arm-GIC-fundamentals)
